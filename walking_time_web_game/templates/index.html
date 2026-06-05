@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>猜最短開車時間遊戲</title>
+
+    <style>
+        body {
+            font-family: Arial, "Noto Sans TC", sans-serif;
+            margin: 0;
+            background: #f5f5f5;
+            color: #222;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 30px auto;
+            padding: 24px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        .question {
+            padding: 16px;
+            background: #eef3ff;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+
+        .place {
+            font-weight: bold;
+        }
+
+        form {
+            margin: 16px 0;
+        }
+
+        input, select {
+            padding: 10px;
+            font-size: 16px;
+        }
+
+        input[type="number"] {
+            width: 180px;
+        }
+
+        button {
+            padding: 10px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 8px;
+            background: #222;
+            color: white;
+        }
+
+        button.secondary {
+            background: #666;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 16px;
+            background: #f0fff3;
+            border-radius: 12px;
+        }
+
+        .error {
+            margin-top: 20px;
+            padding: 16px;
+            background: #ffecec;
+            border-radius: 12px;
+            color: #900;
+        }
+
+        .map {
+            margin-top: 24px;
+        }
+
+        .map iframe {
+            width: 100%;
+            height: 520px;
+            border-radius: 12px;
+        }
+
+        .score {
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .route-order {
+            padding: 12px;
+            background: #fff8df;
+            border-radius: 10px;
+            margin-top: 12px;
+        }
+
+        .small-note {
+            font-size: 14px;
+            color: #555;
+        }
+
+        .hidden-map-note {
+            margin-top: 16px;
+            padding: 14px;
+            background: #fff4e6;
+            border-radius: 10px;
+            color: #6b3d00;
+        }
+
+        .rule-box {
+            padding: 12px;
+            background: #f7f7f7;
+            border-radius: 10px;
+            margin-bottom: 16px;
+            font-size: 15px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>猜最短開車時間遊戲</h1>
+
+        <div class="rule-box">
+            <p>
+                系統會依照難度隨機選出幾個景點。請你猜：
+                <b>開車拜訪全部景點所需的最短總時間</b>。
+            </p>
+
+            <p>
+                本遊戲會把 OSRM 原始預估開車時間乘以
+                <b>{{ time_multiplier }}</b>，
+                讓時間比較接近現實開車狀況。
+            </p>
+        </div>
+
+        <form method="POST">
+            <input type="hidden" name="action" value="new">
+
+            <label for="difficulty">選擇難度：</label>
+            <select name="difficulty" id="difficulty">
+                <option value="easy" {% if difficulty == "easy" %}selected{% endif %}>
+                    簡單：2 個地方
+                </option>
+                <option value="medium" {% if difficulty == "medium" %}selected{% endif %}>
+                    中等：3 個地方
+                </option>
+                <option value="hard" {% if difficulty == "hard" %}selected{% endif %}>
+                    困難：4 個地方
+                </option>
+            </select>
+
+            <button class="secondary" type="submit">產生新題目</button>
+        </form>
+
+        {% if places %}
+            <div class="question">
+                <h2>目前難度：{{ difficulty_name }}</h2>
+
+                <p>這一題的景點是：</p>
+
+                <ol>
+                    {% for place in places %}
+                        <li><span class="place">{{ place }}</span></li>
+                    {% endfor %}
+                </ol>
+
+                <p class="small-note">
+                    你不需要猜順序，只要猜「把全部地方開完的最短總時間」。
+                </p>
+            </div>
+
+            <form method="POST">
+                <label for="guess">你的猜測：</label>
+                <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    name="guess"
+                    id="guess"
+                    required
+                    placeholder="例如 35"
+                >
+                分鐘
+                <button type="submit">送出答案</button>
+            </form>
+        {% endif %}
+
+        {% if show_hidden_map_note %}
+            <div class="hidden-map-note">
+                目前是中等或困難模式，地圖會在你送出答案後才顯示。
+            </div>
+        {% endif %}
+
+        {% if result %}
+            <div class="result">
+                <h2>結果</h2>
+
+                <p class="score">得分：{{ result.score }} 分</p>
+
+                <p>你的猜測：{{ "%.1f"|format(result.user_guess_min) }} 分鐘</p>
+                <p>調整後最短開車時間：{{ "%.1f"|format(result.adjusted_time_min) }} 分鐘</p>
+                <p class="small-note">
+                    OSRM 原始預估時間：{{ "%.1f"|format(result.original_time_min) }} 分鐘，
+                    乘以 {{ time_multiplier }} 後作為答案。
+                </p>
+
+                <p>誤差：{{ "%.1f"|format(result.error_min) }} 分鐘</p>
+                <p>誤差百分比：{{ "%.1f"|format(result.error_percent) }}%</p>
+                <p>最短開車距離：{{ "%.2f"|format(result.real_distance_km) }} km</p>
+
+                <h3>{{ result.comment }}</h3>
+
+                <div class="route-order">
+                    <h3>最佳拜訪順序</h3>
+
+                    <ol>
+                        {% for place in result.best_places %}
+                            <li>{{ place }}</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+            </div>
+        {% endif %}
+
+        {% if error %}
+            <div class="error">
+                發生錯誤：{{ error }}
+            </div>
+        {% endif %}
+
+        {% if map_html %}
+            <div class="map">
+                {{ map_html|safe }}
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>
