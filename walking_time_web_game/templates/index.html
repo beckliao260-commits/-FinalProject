@@ -144,6 +144,15 @@
         <form method="POST">
             <input type="hidden" name="action" value="new">
 
+            <label for="region">選擇地區：</label>
+            <select name="region" id="region">
+                {% for region_id, region_data in regions.items() %}
+                    <option value="{{ region_id }}" {% if region == region_id %}selected{% endif %}>
+                        {{ region_data.name }}
+                    </option>
+                {% endfor %}
+            </select>
+
             <label for="difficulty">選擇難度：</label>
             <select name="difficulty" id="difficulty">
                 <option value="easy" {% if difficulty == "easy" %}selected{% endif %}>
@@ -162,7 +171,7 @@
 
         {% if places %}
             <div class="question">
-                <h2>目前難度：{{ difficulty_name }}</h2>
+                <h2>目前地區：{{ region_name }}，目前難度：{{ difficulty_name }}</h2>
 
                 <p>這一題的景點是：</p>
 

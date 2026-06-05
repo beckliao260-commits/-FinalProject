@@ -5,25 +5,10 @@ import requests
 import folium
 
 from flask import Flask, render_template, request, session
+from regions import DEFAULT_REGION_ID, REGIONS
 
 app = Flask(__name__)
 app.secret_key = "change-this-secret-key"
-
-
-PLACES = [
-    "台北車站, Taipei, Taiwan",
-    "台北101, Taipei, Taiwan",
-    "國立故宮博物院, Taipei, Taiwan",
-    "中正紀念堂, Taipei, Taiwan",
-    "龍山寺, Taipei, Taiwan",
-    "松山文創園區, Taipei, Taiwan",
-    "大安森林公園, Taipei, Taiwan",
-    "西門町, Taipei, Taiwan",
-    "士林夜市, Taipei, Taiwan",
-    "象山, Taipei, Taiwan",
-    "饒河街觀光夜市, Taipei, Taiwan",
-    "美麗華百樂園, Taipei, Taiwan"
-]
 
 
 DIFFICULTY_SETTINGS = {
@@ -240,16 +225,54 @@ def should_show_map_before_guess(difficulty):
     return difficulty == "easy"
 
 
-def create_new_question(difficulty):
+def get_region(region_id):
+    """
+    依照地區代號取得地區資料。
+    """
+    if region_id not in REGIONS:
+        region_id = DEFAULT_REGION_ID
+
+    return region_id, REGIONS[region_id]
+
+
+def get_template_data(map_html=None, result=None, error=None):
+    """
+    整理模板需要的共用資料，避免每個回傳頁面都重複寫一大段。
+    """
+    difficulty = session.get("difficulty", "easy")
+    region_id = session.get("region", DEFAULT_REGION_ID)
+    region_id, region = get_region(region_id)
+
+    return {
+        "places": session.get("places"),
+        "difficulty": difficulty,
+        "difficulty_name": DIFFICULTY_SETTINGS[difficulty]["name"],
+        "region": region_id,
+        "region_name": region["name"],
+        "regions": REGIONS,
+        "map_html": map_html,
+        "result": result,
+        "error": error,
+        "show_hidden_map_note": False if result else not should_show_map_before_guess(difficulty),
+        "time_multiplier": TIME_MULTIPLIER
+    }
+
+
+def create_new_question(difficulty, region_id):
     """
     建立新題目。
     """
     if difficulty not in DIFFICULTY_SETTINGS:
         difficulty = "easy"
 
+    region_id, region = get_region(region_id)
     place_count = DIFFICULTY_SETTINGS[difficulty]["place_count"]
+    places = region["places"]
 
-    selected_places = random.sample(PLACES, place_count)
+    if len(places) < place_count:
+        raise ValueError(f"{region['name']} 的地點數量不足，無法產生這個難度的題目")
+
+    selected_places = random.sample(places, place_count)
 
     selected_coords = []
 
@@ -261,6 +284,7 @@ def create_new_question(difficulty):
         time.sleep(1)
 
     session["difficulty"] = difficulty
+    session["region"] = region_id
     session["places"] = selected_places
     session["coords"] = selected_coords
 
@@ -272,9 +296,10 @@ def index():
 
     if request.method == "GET":
         difficulty = "easy"
+        region = DEFAULT_REGION_ID
 
         try:
-            create_new_question(difficulty)
+            create_new_question(difficulty, region)
 
             if should_show_map_before_guess(difficulty):
                 map_html = make_map(
@@ -288,26 +313,17 @@ def index():
             error = str(e)
             map_html = None
 
-        return render_template(
-            "index.html",
-            places=session.get("places"),
-            difficulty=session.get("difficulty", "easy"),
-            difficulty_name=DIFFICULTY_SETTINGS[session.get("difficulty", "easy")]["name"],
-            map_html=map_html,
-            result=result,
-            error=error,
-            show_hidden_map_note=not should_show_map_before_guess(session.get("difficulty", "easy")),
-            time_multiplier=TIME_MULTIPLIER
-        )
+        return render_template("index.html", **get_template_data(map_html, result, error))
 
     if request.method == "POST":
         action = request.form.get("action")
 
         if action == "new":
             difficulty = request.form.get("difficulty", "easy")
+            region = request.form.get("region", DEFAULT_REGION_ID)
 
             try:
-                create_new_question(difficulty)
+                create_new_question(difficulty, region)
 
                 if should_show_map_before_guess(difficulty):
                     map_html = make_map(
@@ -321,17 +337,7 @@ def index():
                 error = str(e)
                 map_html = None
 
-            return render_template(
-                "index.html",
-                places=session.get("places"),
-                difficulty=session.get("difficulty", "easy"),
-                difficulty_name=DIFFICULTY_SETTINGS[session.get("difficulty", "easy")]["name"],
-                map_html=map_html,
-                result=result,
-                error=error,
-                show_hidden_map_note=not should_show_map_before_guess(session.get("difficulty", "easy")),
-                time_multiplier=TIME_MULTIPLIER
-            )
+            return render_template("index.html", **get_template_data(map_html, result, error))
 
         try:
             user_guess_min = float(request.form["guess"])
@@ -392,17 +398,7 @@ def index():
             else:
                 map_html = None
 
-        return render_template(
-            "index.html",
-            places=session.get("places"),
-            difficulty=session.get("difficulty", "easy"),
-            difficulty_name=DIFFICULTY_SETTINGS[session.get("difficulty", "easy")]["name"],
-            map_html=map_html,
-            result=result,
-            error=error,
-            show_hidden_map_note=False if result else not should_show_map_before_guess(session.get("difficulty", "easy")),
-            time_multiplier=TIME_MULTIPLIER
-        )
+        return render_template("index.html", **get_template_data(map_html, result, error))
 
 
 if __name__ == "__main__":
