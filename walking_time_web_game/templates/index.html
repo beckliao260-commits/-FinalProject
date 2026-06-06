@@ -126,7 +126,7 @@
 
 <body>
     <div class="container">
-        <h1>猜最短開車時間遊戲</h1>
+        <h1>猜開車時間遊戲</h1>
 
         <div class="rule-box">
             <p>
@@ -182,7 +182,7 @@
                 </ol>
 
                 <p class="small-note">
-                    你不需要猜順序，只要猜「把全部地方開完的最短總時間」。
+                    只需猜經過全部點的最短時間。
                 </p>
             </div>
 
@@ -215,11 +215,8 @@
                 <p class="score">得分：{{ result.score }} 分</p>
 
                 <p>你的猜測：{{ "%.1f"|format(result.user_guess_min) }} 分鐘</p>
-                <p>調整後最短開車時間：{{ "%.1f"|format(result.adjusted_time_min) }} 分鐘</p>
-                <p class="small-note">
-                    OSRM 原始預估時間：{{ "%.1f"|format(result.original_time_min) }} 分鐘，
-                    乘以 {{ time_multiplier }} 後作為答案。
-                </p>
+                <p>最短開車時間：{{ "%.1f"|format(result.adjusted_time_min) }} 分鐘</p>
+        
 
                 <p>誤差：{{ "%.1f"|format(result.error_min) }} 分鐘</p>
                 <p>誤差百分比：{{ "%.1f"|format(result.error_percent) }}%</p>
