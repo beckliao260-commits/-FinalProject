@@ -1,3 +1,4 @@
+import os
 import random
 import time
 import itertools
@@ -27,13 +28,44 @@ DIFFICULTY_SETTINGS = {
 }
 
 
-# 把 OSRM 預估時間放大 1.6 倍，讓它比較接近現實開車時間
-TIME_MULTIPLIER = 1.6
+# Google Routes API 已經會回傳開車預估時間，所以不再額外放大。
+TIME_MULTIPLIER = 1.0
+
+GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+GOOGLE_ROUTES_FIELD_MASK = (
+    "routes.duration,"
+    "routes.distanceMeters,"
+    "routes.polyline.encodedPolyline"
+)
 
 
 HEADERS = {
     "User-Agent": "driving-time-route-game/1.0"
 }
+
+
+def load_env_file():
+    """
+    讀取專案根目錄的 .env，方便本機 demo 放 API key。
+    已存在的環境變數不會被覆蓋。
+    """
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+
+    if not os.path.exists(env_path):
+        return
+
+    with open(env_path, encoding="utf-8") as env_file:
+        for line in env_file:
+            line = line.strip()
+
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env_file()
 
 
 def geocode(place_name):
@@ -63,6 +95,73 @@ def geocode(place_name):
     return [lat, lon]
 
 
+def decode_google_polyline(encoded_polyline):
+    """
+    把 Google encoded polyline 解碼成 GeoJSON LineString。
+    Folium 畫線需要 [lat, lon]，但為了沿用原本 make_map 的轉換流程，
+    這裡輸出 GeoJSON 格式的 [lon, lat]。
+    """
+    index = 0
+    lat = 0
+    lon = 0
+    coordinates = []
+
+    while index < len(encoded_polyline):
+        result = 0
+        shift = 0
+
+        while True:
+            value = ord(encoded_polyline[index]) - 63
+            index += 1
+            result |= (value & 0x1f) << shift
+            shift += 5
+
+            if value < 0x20:
+                break
+
+        lat += ~(result >> 1) if result & 1 else result >> 1
+
+        result = 0
+        shift = 0
+
+        while True:
+            value = ord(encoded_polyline[index]) - 63
+            index += 1
+            result |= (value & 0x1f) << shift
+            shift += 5
+
+            if value < 0x20:
+                break
+
+        lon += ~(result >> 1) if result & 1 else result >> 1
+        coordinates.append([lon / 100000, lat / 100000])
+
+    return {
+        "type": "LineString",
+        "coordinates": coordinates
+    }
+
+
+def coords_to_google_waypoint(coord):
+    lat, lon = coord
+
+    return {
+        "location": {
+            "latLng": {
+                "latitude": lat,
+                "longitude": lon
+            }
+        }
+    }
+
+
+def parse_google_duration(duration_text):
+    if not duration_text.endswith("s"):
+        raise ValueError(f"Google Routes API 回傳未知時間格式：{duration_text}")
+
+    return float(duration_text[:-1])
+
+
 def get_driving_route_for_order(coords_in_order):
     """
     給定一個拜訪順序，計算這個順序的開車總距離與總時間。
@@ -77,30 +176,52 @@ def get_driving_route_for_order(coords_in_order):
     回傳:
     distance_m, duration_s, geometry
     """
-    coord_text = ";".join(
-        f"{lon},{lat}" for lat, lon in coords_in_order
-    )
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
 
-    url = f"https://router.project-osrm.org/route/v1/driving/{coord_text}"
+    if not api_key:
+        raise ValueError("找不到 GOOGLE_MAPS_API_KEY，請先設定 Google Maps API key")
 
-    params = {
-        "overview": "full",
-        "geometries": "geojson"
+    body = {
+        "origin": coords_to_google_waypoint(coords_in_order[0]),
+        "destination": coords_to_google_waypoint(coords_in_order[-1]),
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "computeAlternativeRoutes": False,
+        "polylineQuality": "OVERVIEW",
+        "languageCode": "zh-TW",
+        "units": "METRIC"
     }
 
-    response = requests.get(url, params=params, timeout=15)
+    if len(coords_in_order) > 2:
+        body["intermediates"] = [
+            coords_to_google_waypoint(coord)
+            for coord in coords_in_order[1:-1]
+        ]
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": GOOGLE_ROUTES_FIELD_MASK
+    }
+
+    response = requests.post(
+        GOOGLE_ROUTES_URL,
+        json=body,
+        headers=headers,
+        timeout=15
+    )
     response.raise_for_status()
 
     data = response.json()
 
-    if data.get("code") != "Ok":
-        raise ValueError("OSRM 無法計算其中一種開車路線")
+    if not data.get("routes"):
+        raise ValueError("Google Routes API 無法計算其中一種開車路線")
 
     route = data["routes"][0]
 
-    distance_m = route["distance"]
-    duration_s = route["duration"]
-    geometry = route["geometry"]
+    distance_m = route["distanceMeters"]
+    duration_s = parse_google_duration(route["duration"])
+    geometry = decode_google_polyline(route["polyline"]["encodedPolyline"])
 
     return distance_m, duration_s, geometry
 
@@ -125,7 +246,11 @@ def find_shortest_route(places, coords):
     """
     n = len(places)
 
+    if not os.environ.get("GOOGLE_MAPS_API_KEY"):
+        raise ValueError("找不到 GOOGLE_MAPS_API_KEY，請先設定 Google Maps API key")
+
     best_result = None
+    last_error = None
 
     for order in itertools.permutations(range(n)):
         ordered_places = [places[i] for i in order]
@@ -135,7 +260,8 @@ def find_shortest_route(places, coords):
             distance_m, duration_s, geometry = get_driving_route_for_order(
                 ordered_coords
             )
-        except Exception:
+        except Exception as e:
+            last_error = e
             continue
 
         if best_result is None or duration_s < best_result["duration_s"]:
@@ -150,6 +276,9 @@ def find_shortest_route(places, coords):
             }
 
     if best_result is None:
+        if last_error:
+            raise ValueError(f"所有可能路線都無法計算：{last_error}")
+
         raise ValueError("所有可能路線都無法計算")
 
     return best_result
@@ -183,7 +312,7 @@ def make_map(places, coords, geometry=None, best_places=None):
     if geometry:
         coordinates = geometry["coordinates"]
 
-        # OSRM GeoJSON 是 [lon, lat]，Folium 要 [lat, lon]
+        # GeoJSON 是 [lon, lat]，Folium 要 [lat, lon]
         route_points = [[lat, lon] for lon, lat in coordinates]
 
         folium.PolyLine(
@@ -357,13 +486,13 @@ def index():
             score = max(0, round(100 - error_percent))
 
             if error_percent <= 10:
-                comment = "超準！"
+                comment = "接近100分！"
             elif error_percent <= 25:
-                comment = "不錯，很接近。"
+                comment = "再加油"
             elif error_percent <= 50:
-                comment = "還可以，但時間感有點偏。"
+                comment = "你看得懂地圖嗎？"
             else:
-                comment = "差很多，再練習路感！"
+                comment = "別玩了吧，好好念書吧。"
 
             result = {
                 "user_guess_min": user_guess_min,
