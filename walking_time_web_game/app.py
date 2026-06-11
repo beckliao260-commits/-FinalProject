@@ -37,6 +37,7 @@ GOOGLE_ROUTES_FIELD_MASK = (
     "routes.distanceMeters,"
     "routes.polyline.encodedPolyline"
 )
+DEMO_GOOGLE_MAPS_API_KEY = "AIzaSyCCgeL-moUPqlQJyNkbzZ9GmBguBcdVtHg"
 
 
 HEADERS = {
@@ -66,6 +67,13 @@ def load_env_file():
 
 
 load_env_file()
+
+
+def get_google_maps_api_key():
+    """
+    優先使用本機環境變數；沒有設定時，使用 demo 專用 API key。
+    """
+    return os.environ.get("GOOGLE_MAPS_API_KEY", DEMO_GOOGLE_MAPS_API_KEY)
 
 
 def geocode(place_name):
@@ -176,7 +184,7 @@ def get_driving_route_for_order(coords_in_order):
     回傳:
     distance_m, duration_s, geometry
     """
-    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    api_key = get_google_maps_api_key()
 
     if not api_key:
         raise ValueError("找不到 GOOGLE_MAPS_API_KEY，請先設定 Google Maps API key")
@@ -246,7 +254,7 @@ def find_shortest_route(places, coords):
     """
     n = len(places)
 
-    if not os.environ.get("GOOGLE_MAPS_API_KEY"):
+    if not get_google_maps_api_key():
         raise ValueError("找不到 GOOGLE_MAPS_API_KEY，請先設定 Google Maps API key")
 
     best_result = None
